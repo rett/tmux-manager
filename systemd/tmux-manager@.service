@@ -1,0 +1,26 @@
+[Unit]
+Description=Managed tmux sessions for user %i
+# Ordering hint only; for sessions needing live network at start, switch to:
+# Wants=network-online.target / After=network-online.target
+After=network.target
+
+[Service]
+Type=oneshot
+# Unit stays "active" after the boot script exits; the tmux server it spawned
+# keeps running in this unit's cgroup.
+RemainAfterExit=yes
+User=%i
+# Tilde resolves against User=. Do NOT use %h (root's home in system units).
+WorkingDirectory=~
+ExecStart=/opt/tmux-manager/bin/tmux-manager boot
+# Kills only managed sessions. NOTE: the default KillMode=control-group then
+# SIGTERMs anything left in the cgroup -- including the tmux server and any
+# manually created sessions on it, IF this unit spawned the server. Use
+# 'tmux-manager stop <session>' for surgical stops.
+ExecStop=/opt/tmux-manager/bin/tmux-manager shutdown
+TimeoutStopSec=30
+# Deliberately no sandboxing (PrivateTmp etc.): the tmux socket lives in
+# /tmp/tmux-UID and must be reachable from the user's login shells.
+
+[Install]
+WantedBy=multi-user.target

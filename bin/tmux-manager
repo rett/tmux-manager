@@ -1,0 +1,409 @@
+#!/usr/bin/env bash
+# tmux-manager -- manage per-user tmux sessions defined in ~/.tmux-manager/*.conf
+#
+# Used by tmux-manager@.service (boot/shutdown) and interactively
+# (list/enable/disable/start/stop/attach).
+#
+# No 'set -e': the script is dominated by expected-nonzero commands
+# (tmux has-session, grep -q) and a must-continue-on-error boot loop.
+# Errors are handled explicitly with '|| return 1' / die.
+set -uo pipefail
+
+# systemd >= 240 sets $HOME for User= units; fall back for odd environments.
+: "${HOME:=$(getent passwd "$(id -u)" | cut -d: -f6)}"
+
+PROG="tmux-manager"
+CONF_DIR="${TMUX_MANAGER_CONF_DIR:-$HOME/.tmux-manager}"
+
+log()  { printf '%s: %s\n' "$PROG" "$*"; }
+warn() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+die()  { warn "$*"; exit 1; }
+
+require_tmux() {
+    command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
+}
+
+require_not_root() {
+    if [[ $EUID -eq 0 ]]; then
+        die "refusing to run as root; run as the target user (the unit uses User=%i)"
+    fi
+}
+
+trim() {
+    local s=$1
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
+# Exact-match session check; bare -t would prefix-match ('dev' matches 'dev2').
+session_running() {
+    tmux has-session -t "=$1" 2>/dev/null
+}
+
+# Parse a session conf into CFG_* globals. Returns 1 on an invalid session
+# name (all other problems degrade with a warning). CFG_ENABLED is valid
+# even on failure, so callers can tell whether a broken conf was enabled.
+load_config() {
+    local file=$1
+    CFG_SESSION_NAME="$(basename "$file" .conf)"
+    CFG_START_DIR="$HOME"
+    CFG_ENABLED="false"
+    CFG_WINDOWS=()
+    CFG_POST_CMDS=()
+
+    local line key value wname wcmd
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%$'\r'}
+        line=$(trim "$line")
+        # Full-line comments only: '#' may legitimately appear in commands.
+        [[ -z $line || $line == \#* ]] && continue
+        if [[ $line != *=* ]]; then
+            warn "$file: ignoring malformed line: $line"
+            continue
+        fi
+        key=$(trim "${line%%=*}")
+        value=$(trim "${line#*=}")
+        case $key in
+            SESSION_NAME)
+                CFG_SESSION_NAME=$value
+                ;;
+            START_DIR)
+                value=${value/#\~/$HOME}
+                value=${value//\$HOME/$HOME}
+                CFG_START_DIR=$value
+                ;;
+            ENABLED)
+                CFG_ENABLED=${value,,}
+                ;;
+            WINDOW)
+                # Split on the FIRST colon only; commands may contain colons.
+                if [[ $value == *:* ]]; then
+                    wname=$(trim "${value%%:*}")
+                    wcmd=$(trim "${value#*:}")
+                else
+                    wname=$value
+                    wcmd=""
+                fi
+                if [[ -z $wname ]]; then
+                    warn "$file: WINDOW with empty name, skipping: $line"
+                    continue
+                fi
+                CFG_WINDOWS+=("${wname}"$'\x1f'"${wcmd}")
+                ;;
+            POST_CMD)
+                CFG_POST_CMDS+=("$value")
+                ;;
+            *)
+                warn "$file: unknown key '$key', ignoring"
+                ;;
+        esac
+    done <"$file"
+
+    # ':' and '.' break tmux -t targets; whitespace breaks ergonomics.
+    if [[ ! $CFG_SESSION_NAME =~ ^[A-Za-z0-9_@-]+$ ]]; then
+        warn "$file: invalid session name '$CFG_SESSION_NAME' (allowed: A-Za-z0-9_@-)"
+        return 1
+    fi
+}
+
+# Create the session described by a conf file. Idempotent: skips if the
+# session already exists. The session counts as started if new-session
+# succeeded; window/POST_CMD failures warn but do not abort.
+start_from_conf() {
+    local file=$1
+    load_config "$file" || return 1
+
+    local name=$CFG_SESSION_NAME
+    if session_running "$name"; then
+        log "session '$name' already running, skipping"
+        return 0
+    fi
+
+    local dir=$CFG_START_DIR
+    if [[ ! -d $dir ]]; then
+        warn "$file: START_DIR '$dir' does not exist, using $HOME"
+        dir=$HOME
+    fi
+
+    local entry wname wcmd wid first=1
+    if [[ ${#CFG_WINDOWS[@]} -eq 0 ]]; then
+        tmux new-session -d -s "$name" -c "$dir" \
+            || { warn "$file: failed to create session '$name'"; return 1; }
+    else
+        for entry in "${CFG_WINDOWS[@]}"; do
+            wname=${entry%%$'\x1f'*}
+            wcmd=${entry#*$'\x1f'}
+            # Capture the window id: immune to base-index settings in the
+            # user's ~/.tmux.conf and to duplicate window names.
+            if [[ $first -eq 1 ]]; then
+                wid=$(tmux new-session -d -P -F '#{window_id}' \
+                          -s "$name" -c "$dir" -n "$wname") \
+                    || { warn "$file: failed to create session '$name'"; return 1; }
+                first=0
+            else
+                wid=$(tmux new-window -d -P -F '#{window_id}' \
+                          -t "=$name:" -c "$dir" -n "$wname") \
+                    || { warn "$file: failed to create window '$wname'"; continue; }
+            fi
+            if [[ -n $wcmd ]]; then
+                # -l sends the command literally (no key-name translation:
+                # 'Enter'/'Space' tokens stay text); Enter goes separately
+                # because -l would literalize it too.
+                tmux send-keys -t "$wid" -l -- "$wcmd" \
+                    || warn "$file: failed to send command to window '$wname'"
+                tmux send-keys -t "$wid" Enter \
+                    || warn "$file: failed to send Enter to window '$wname'"
+            fi
+        done
+    fi
+
+    local cmd
+    for cmd in "${CFG_POST_CMDS[@]}"; do
+        # eval gives quoting support; the user owns the conf and POST_CMD is
+        # arbitrary by design.
+        eval "tmux $cmd" || warn "$file: POST_CMD failed: $cmd"
+    done
+
+    log "started session '$name'"
+}
+
+# Print the conf path defining a session name (covers SESSION_NAME= overrides).
+find_conf_for_session() {
+    local target=$1 conf
+    for conf in "$CONF_DIR"/*.conf; do
+        [[ -e $conf ]] || break
+        load_config "$conf" 2>/dev/null || continue
+        if [[ $CFG_SESSION_NAME == "$target" ]]; then
+            printf '%s' "$conf"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_conf() {
+    local name=$1 conf
+    conf=$(find_conf_for_session "$name") \
+        || die "no session config for '$name' in $CONF_DIR"
+    printf '%s' "$conf"
+}
+
+cmd_boot() {
+    require_tmux
+    if [[ ! -d $CONF_DIR ]]; then
+        log "config directory $CONF_DIR does not exist, nothing to do"
+        return 0
+    fi
+    local confs=("$CONF_DIR"/*.conf)
+    if [[ ! -e ${confs[0]} ]]; then
+        log "no session configs in $CONF_DIR, nothing to do"
+        return 0
+    fi
+
+    local conf attempted=0 started=0 seen=" "
+    for conf in "${confs[@]}"; do
+        if ! load_config "$conf"; then
+            # Broken conf: counts as a failed attempt only if it was enabled.
+            if [[ $CFG_ENABLED == "true" ]]; then
+                attempted=$((attempted + 1))
+            fi
+            continue
+        fi
+        [[ $CFG_ENABLED == "true" ]] || continue
+        if [[ $seen == *" $CFG_SESSION_NAME "* ]]; then
+            warn "$conf: duplicate session name '$CFG_SESSION_NAME', first config wins; skipping"
+            continue
+        fi
+        seen="$seen$CFG_SESSION_NAME "
+        attempted=$((attempted + 1))
+        if start_from_conf "$conf"; then
+            started=$((started + 1))
+        fi
+    done
+
+    if [[ $attempted -eq 0 ]]; then
+        log "no enabled sessions, nothing to do"
+        return 0
+    fi
+    log "started $started of $attempted enabled session(s)"
+    # Fail the unit only when everything failed; one broken session must not
+    # take down the others.
+    [[ $started -gt 0 ]]
+}
+
+cmd_shutdown() {
+    require_tmux
+    local conf remaining
+    if [[ -d $CONF_DIR ]]; then
+        for conf in "$CONF_DIR"/*.conf; do
+            [[ -e $conf ]] || break
+            load_config "$conf" 2>/dev/null || continue
+            if session_running "$CFG_SESSION_NAME"; then
+                if tmux kill-session -t "=$CFG_SESSION_NAME" 2>/dev/null; then
+                    log "killed session '$CFG_SESSION_NAME'"
+                else
+                    warn "failed to kill session '$CFG_SESSION_NAME'"
+                fi
+            fi
+        done
+    fi
+    remaining=$(tmux list-sessions -F '#S' 2>/dev/null || true)
+    if [[ -n $remaining ]]; then
+        log "leaving tmux server up: unmanaged sessions remain: $(tr '\n' ' ' <<<"$remaining")"
+    else
+        # tmux's exit-empty (default on) already stops the server when the
+        # last session dies; this covers 'exit-empty off' users.
+        tmux kill-server 2>/dev/null || true
+    fi
+    # A stop must never flip the unit to failed.
+    return 0
+}
+
+cmd_list() {
+    require_tmux
+    if [[ ! -d $CONF_DIR ]] || ! compgen -G "$CONF_DIR/*.conf" >/dev/null; then
+        log "no session configs in $CONF_DIR"
+        return 0
+    fi
+    local running conf is_running
+    running=$(tmux list-sessions -F '#S' 2>/dev/null || true)
+    printf '%-24s %-8s %s\n' "SESSION" "ENABLED" "RUNNING"
+    for conf in "$CONF_DIR"/*.conf; do
+        if ! load_config "$conf" 2>/dev/null; then
+            printf '%-24s %-8s %-8s (invalid config: %s)\n' \
+                "$(basename "$conf" .conf)" "-" "-" "$conf"
+            continue
+        fi
+        is_running=no
+        if grep -qxF "$CFG_SESSION_NAME" <<<"$running"; then
+            is_running=yes
+        fi
+        printf '%-24s %-8s %s\n' "$CFG_SESSION_NAME" "$CFG_ENABLED" "$is_running"
+    done
+}
+
+set_enabled() {
+    local name=$1 val=$2 conf
+    conf=$(resolve_conf "$name") || exit 1
+    if grep -qE '^[[:space:]]*ENABLED=' "$conf"; then
+        sed -i -E "s/^[[:space:]]*ENABLED=.*/ENABLED=$val/" "$conf"
+    else
+        printf 'ENABLED=%s\n' "$val" >>"$conf"
+    fi
+    if [[ $val == "true" ]]; then
+        log "session '$name' enabled (will start at boot)"
+    else
+        log "session '$name' disabled (will not start at boot)"
+    fi
+}
+
+cmd_start() {
+    require_tmux
+    local name=$1 conf
+    conf=$(resolve_conf "$name") || exit 1
+    # Manual start is explicit intent; ENABLED only gates boot.
+    start_from_conf "$conf" || die "failed to start session '$name'"
+}
+
+cmd_stop() {
+    require_tmux
+    local name=$1 conf
+    # Refuse to touch sessions not defined by a conf file.
+    conf=$(find_conf_for_session "$name") \
+        || die "no session config for '$name' in $CONF_DIR (refusing to kill unmanaged sessions)"
+    if session_running "$name"; then
+        tmux kill-session -t "=$name" || die "failed to kill session '$name'"
+        log "stopped session '$name'"
+    else
+        log "session '$name' is not running"
+    fi
+}
+
+cmd_attach() {
+    require_tmux
+    local name=$1 conf
+    conf=$(resolve_conf "$name") || exit 1
+    session_running "$name" || die "session '$name' is not running (try: $PROG start $name)"
+    if [[ -n ${TMUX:-} ]]; then
+        exec tmux switch-client -t "=$name"
+    else
+        exec tmux attach-session -t "=$name"
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: $PROG <command> [args]
+
+Manage per-user tmux sessions defined in $CONF_DIR/*.conf.
+
+Commands:
+  list               show configured sessions with enabled/running state
+  enable <session>   start the session at boot (sets ENABLED=true)
+  disable <session>  do not start the session at boot (sets ENABLED=false)
+  start <session>    start a session now (regardless of ENABLED)
+  stop <session>     kill a managed session (never touches unmanaged sessions)
+  attach <session>   attach to a running managed session
+  boot               start all enabled sessions (used by tmux-manager@.service)
+  shutdown           kill all managed sessions (used by tmux-manager@.service)
+
+Config format (~/.tmux-manager/<name>.conf), one file per session:
+  SESSION_NAME=dev          session name (default: conf filename)
+  START_DIR=~/projects      working directory (default: \$HOME)
+  ENABLED=true              start at boot (default: false)
+  WINDOW=edit:vim .         window 'edit' running 'vim .' (repeatable)
+  WINDOW=shell              window with a plain shell
+  POST_CMD=split-window -h -t =dev:shell   raw tmux command (repeatable)
+
+Environment:
+  TMUX_MANAGER_CONF_DIR     override the config directory (default ~/.tmux-manager)
+EOF
+}
+
+main() {
+    local cmd=${1:-}
+    if [[ -z $cmd ]]; then
+        usage >&2
+        exit 1
+    fi
+    shift
+    case $cmd in
+        help | -h | --help)
+            usage
+            return 0
+            ;;
+    esac
+    require_not_root
+    case $cmd in
+        boot) cmd_boot ;;
+        shutdown) cmd_shutdown ;;
+        list) cmd_list ;;
+        enable)
+            [[ $# -eq 1 ]] || die "usage: $PROG enable <session>"
+            set_enabled "$1" true
+            ;;
+        disable)
+            [[ $# -eq 1 ]] || die "usage: $PROG disable <session>"
+            set_enabled "$1" false
+            ;;
+        start)
+            [[ $# -eq 1 ]] || die "usage: $PROG start <session>"
+            cmd_start "$1"
+            ;;
+        stop)
+            [[ $# -eq 1 ]] || die "usage: $PROG stop <session>"
+            cmd_stop "$1"
+            ;;
+        attach)
+            [[ $# -eq 1 ]] || die "usage: $PROG attach <session>"
+            cmd_attach "$1"
+            ;;
+        *)
+            usage >&2
+            die "unknown command: $cmd"
+            ;;
+    esac
+}
+
+main "$@"
