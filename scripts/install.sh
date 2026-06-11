@@ -23,6 +23,7 @@ else
     install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
 fi
 install -m 0644 "$SRC/systemd/tmux-manager@.service" /etc/systemd/system/tmux-manager@.service
+install -D -m 0644 "$SRC/completions/tmux-manager.bash" /usr/share/bash-completion/completions/tmux-manager
 ln -sfn /opt/tmux-manager/bin/tmux-manager /usr/local/bin/tmux-manager
 systemctl daemon-reload
 

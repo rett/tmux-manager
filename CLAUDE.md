@@ -7,8 +7,9 @@ boot from config files in `~/.tmux-manager/*.conf`, managed by the
 
 ## Layout
 
-- `bin/tmux-manager` — bash CLI: `boot`/`shutdown` (called by the unit), `list`, `enable`, `disable`, `start`, `stop`, `attach`
+- `bin/tmux-manager` — bash CLI: `boot`/`shutdown` (called by the unit), `list`, `enable`, `disable`, `start`, `stop`, `attach`, `rename`, `sessions`
 - `systemd/tmux-manager@.service` — system template unit (`Type=oneshot`, `RemainAfterExit=yes`, `User=%i`)
+- `completions/tmux-manager.bash` — bash completion (installed to `/usr/share/bash-completion/completions/tmux-manager`)
 - `examples/*.conf` — sample session configs
 - `scripts/install.sh` — installs to `/opt/tmux-manager/bin`, `/etc/systemd/system`, and symlinks into `/usr/local/bin`
 

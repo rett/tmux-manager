@@ -283,6 +283,46 @@ cmd_list() {
     done
 }
 
+# Machine-readable list of configured session names (scripting/completion).
+cmd_sessions() {
+    local conf
+    [[ -d $CONF_DIR ]] || return 0
+    for conf in "$CONF_DIR"/*.conf; do
+        [[ -e $conf ]] || break
+        load_config "$conf" 2>/dev/null || continue
+        printf '%s\n' "$CFG_SESSION_NAME"
+    done
+}
+
+cmd_rename() {
+    require_tmux
+    local old=$1 new=$2 conf newconf
+    [[ $old != "$new" ]] || die "old and new name are the same"
+    [[ $new =~ ^[A-Za-z0-9_@-]+$ ]] || die "invalid session name '$new' (allowed: A-Za-z0-9_@-)"
+    conf=$(find_conf_for_session "$old") || die "no session config for '$old' in $CONF_DIR"
+    find_conf_for_session "$new" >/dev/null && die "a session config named '$new' already exists"
+    session_running "$new" && die "a running session named '$new' already exists"
+
+    if grep -qE '^[[:space:]]*SESSION_NAME=' "$conf"; then
+        sed -i -E "s/^[[:space:]]*SESSION_NAME=.*/SESSION_NAME=$new/" "$conf"
+    fi
+    # Rewrite tmux target references (=old, =old:win) in POST_CMDs and comments.
+    sed -i -E "s/=${old}([^A-Za-z0-9_@-]|\$)/=${new}\\1/g" "$conf"
+    if [[ $(basename "$conf") == "$old.conf" ]]; then
+        newconf="$CONF_DIR/$new.conf"
+        [[ -e $newconf ]] && die "config file $newconf already exists"
+        mv "$conf" "$newconf"
+        conf=$newconf
+    fi
+    log "renamed session config '$old' -> '$new' ($conf)"
+
+    if session_running "$old"; then
+        tmux rename-session -t "=$old" "$new" \
+            && log "renamed running session '$old' -> '$new'" \
+            || warn "failed to rename running session '$old'"
+    fi
+}
+
 set_enabled() {
     local name=$1 val=$2 conf
     conf=$(resolve_conf "$name") || exit 1
@@ -345,6 +385,9 @@ Commands:
   start <session>    start a session now (regardless of ENABLED)
   stop <session>     kill a managed session (never touches unmanaged sessions)
   attach <session>   attach to a running managed session
+  rename <old> <new> rename a session: conf file, tmux target references in
+                     POST_CMDs, and the running session if there is one
+  sessions           print configured session names (scripting/completion)
   boot               start all enabled sessions (used by tmux-manager@.service)
   shutdown           kill all managed sessions (used by tmux-manager@.service)
 
@@ -398,6 +441,13 @@ main() {
         attach)
             [[ $# -eq 1 ]] || die "usage: $PROG attach <session>"
             cmd_attach "$1"
+            ;;
+        rename)
+            [[ $# -eq 2 ]] || die "usage: $PROG rename <old> <new>"
+            cmd_rename "$1" "$2"
+            ;;
+        sessions)
+            cmd_sessions
             ;;
         *)
             usage >&2
