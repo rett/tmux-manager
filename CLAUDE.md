@@ -24,6 +24,7 @@ boot from config files in `~/.tmux-manager/*.conf`, managed by the
 - tmux session targets always use exact-match syntax (`-t "=$name"`); windows are targeted by captured `#{window_id}`, never by index or name.
 - The CLI uses `set -uo pipefail` without `-e` (expected-nonzero tmux/grep calls); errors are handled explicitly with `|| return 1` / `die`.
 - Window commands are sent with `send-keys -l` plus a separate `Enter`, so the window survives command exit and key-name tokens stay literal.
+- Server placement for logout survival: the *first* `new-session` (the one that may spawn the server) goes through `ensure_server_launch`/`SERVER_LAUNCH`. Interactively it is wrapped in `systemd-run --user --scope` so the server lands under `user@<uid>.service` (needs lingering) instead of the ephemeral SSH `session-NNN.scope`, which logind reaps under `KillUserProcesses=yes`. The unit sets `TMUX_MANAGER_FROM_UNIT=1` to skip the wrapper and keep the server in its own `system.slice` cgroup. Best-effort: falls back to a bare `tmux` when no user manager is reachable.
 - Keep files under 500 lines.
 
 ## Testing

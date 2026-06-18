@@ -7,9 +7,11 @@ user's tmux sessions at boot, with each session described by a small config
 file in `~/.tmux-manager/`. A companion CLI manages the lifecycle: list,
 enable/disable at boot, start, stop, rename, and attach.
 
-No lingering, no user-level units, no extra daemons — sessions run on the
-user's normal tmux server, so plain `tmux ls` and `tmux attach` work exactly
-as you'd expect.
+No extra daemon, no separate socket — sessions run on the user's normal tmux
+server (the default `/tmp/tmux-<uid>/default` socket), so plain `tmux ls` and
+`tmux attach` work exactly as you'd expect. They are also placed in a cgroup
+that outlives your SSH session, so they survive logout (see
+[Persistence across logout](#persistence-across-logout)).
 
 ## How it works
 
@@ -179,6 +181,39 @@ journalctl -u tmux-manager@alice
 - **Crash visibility:** with `Type=oneshot` the unit stays `active (exited)`
   even if the tmux server later dies; `tmux-manager list` is the source of
   truth for what is actually running.
+
+### Persistence across logout
+
+tmux sessions die at logout when two things line up: the tmux server is running
+inside your SSH login's systemd scope (`session-<n>.scope`), and logind is set
+to `KillUserProcesses=yes` (it SIGKILLs everything in a session's scope when the
+session ends). tmux-manager avoids this by making sure the server is never born
+in a login scope:
+
+- **Started at boot (the unit):** the server runs in the unit's own
+  `system.slice` cgroup, independent of any login. It survives every logout and
+  lasts until shutdown — no lingering required.
+- **Started by hand (`tmux-manager start`, when no server is running yet):**
+  the CLI launches it via `systemd-run --user --scope`, parking the server
+  under `user@<uid>.service` instead of the ephemeral login scope. With
+  **lingering enabled** that cgroup outlives every login, so the session
+  survives logout even under `KillUserProcesses=yes`.
+
+For hand-started sessions, enable lingering once:
+
+```sh
+sudo loginctl enable-linger <user>
+```
+
+- A plain `tmux` (not via tmux-manager) started from a login shell still lands
+  in the login scope and dies at logout under `KillUserProcesses=yes`. Start via
+  `tmux-manager start`, or let the boot unit own the server, for durable
+  placement.
+- If you `enable` a session *after* boot and want it persistent immediately,
+  either `tmux-manager start` it (user-scope placement) or
+  `sudo systemctl restart tmux-manager@<user>` so the unit re-owns the server in
+  `system.slice`. Whichever path first creates the server fixes its cgroup;
+  every later session shares that one server.
 
 ## Uninstall
 

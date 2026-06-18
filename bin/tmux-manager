@@ -107,6 +107,27 @@ load_config() {
     fi
 }
 
+# Decide how to spawn the tmux server so it outlives the caller's login.
+# A bare 'tmux' from an SSH shell lands in that login's session-NNN.scope,
+# which logind reaps at logout when KillUserProcesses=yes. Interactively we
+# instead launch the server's first process in a transient scope owned by the
+# *user* systemd manager; with lingering on, user@UID.service outlives every
+# login session, so the server survives logout. Sets SERVER_LAUNCH to the
+# command prefix, or leaves it empty (historical bare 'tmux') when wrapping
+# does not apply: the unit (TMUX_MANAGER_FROM_UNIT=1) owns the server in its
+# own cgroup, a server is already up, or no user manager is reachable.
+declare -a SERVER_LAUNCH=()
+ensure_server_launch() {
+    SERVER_LAUNCH=()
+    tmux list-sessions >/dev/null 2>&1 && return 0          # server already up
+    [[ -n ${TMUX_MANAGER_FROM_UNIT:-} ]] && return 0        # unit owns the server
+    command -v systemd-run >/dev/null 2>&1 || return 0
+    [[ -n ${XDG_RUNTIME_DIR:-} ]] || return 0
+    systemctl --user show -p Version >/dev/null 2>&1 || return 0   # user mgr reachable?
+    systemctl --user reset-failed tmux-server.scope 2>/dev/null    # clear stale name
+    SERVER_LAUNCH=(systemd-run --user --scope --quiet --unit=tmux-server)
+}
+
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
 # succeeded; window/POST_CMD failures warn but do not abort.
@@ -126,9 +147,13 @@ start_from_conf() {
         dir=$HOME
     fi
 
+    # Pick the launch prefix for the process that may spawn the server, so an
+    # interactively-started server lands somewhere that survives logout.
+    ensure_server_launch
+
     local entry wname wcmd wid first=1
     if [[ ${#CFG_WINDOWS[@]} -eq 0 ]]; then
-        tmux new-session -d -s "$name" -c "$dir" \
+        "${SERVER_LAUNCH[@]}" tmux new-session -d -s "$name" -c "$dir" \
             || { warn "$file: failed to create session '$name'"; return 1; }
     else
         for entry in "${CFG_WINDOWS[@]}"; do
@@ -137,7 +162,7 @@ start_from_conf() {
             # Capture the window id: immune to base-index settings in the
             # user's ~/.tmux.conf and to duplicate window names.
             if [[ $first -eq 1 ]]; then
-                wid=$(tmux new-session -d -P -F '#{window_id}' \
+                wid=$("${SERVER_LAUNCH[@]}" tmux new-session -d -P -F '#{window_id}' \
                           -s "$name" -c "$dir" -n "$wname") \
                     || { warn "$file: failed to create session '$name'"; return 1; }
                 first=0

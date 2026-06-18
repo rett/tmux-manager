@@ -12,6 +12,10 @@ RemainAfterExit=yes
 User=%i
 # Tilde resolves against User=. Do NOT use %h (root's home in system units).
 WorkingDirectory=~
+# Tells the CLI it is the unit: spawn the server here in this (system.slice)
+# cgroup, not wrapped in a user-manager scope (which is what interactive
+# 'start' does so a login-shell-spawned server survives logout).
+Environment=TMUX_MANAGER_FROM_UNIT=1
 ExecStart=/opt/tmux-manager/bin/tmux-manager boot
 # Kills only managed sessions. NOTE: the default KillMode=control-group then
 # SIGTERMs anything left in the cgroup -- including the tmux server and any
