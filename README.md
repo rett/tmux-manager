@@ -104,8 +104,10 @@ success and nonzero on errors; diagnostics go to standard error.
 `tmux-manager sudoers check` checks whether sudo currently permits that command.
 Installation is optional and needs a one-time administrator action after the
 normal installation: `sudo /opt/tmux-manager/sbin/tmux-manager-sudoers install`.
-The main CLI provides `sudoers install` and `sudoers remove` instructions for
-these administrator actions. The helper validates the rule with visudo and
+The main CLI provides `sudoers install` and `sudoers remove` actions using
+noninteractive sudo. These require existing administrator authorization; if it
+is unavailable, run the displayed administrator command directly. They never
+grant permission to run the installer. The helper validates the rule with visudo and
 refuses to overwrite or remove a different or unsafe file. Removal uses the
 same command with `remove`. The rule grants only `/usr/bin/loginctl
 enable-linger` for the invoking user; user service control requires no root.

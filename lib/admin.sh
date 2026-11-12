@@ -25,8 +25,10 @@ cmd_sudoers() {
         preview) printf '%s ALL=(root) NOPASSWD: /usr/bin/loginctl enable-linger %s\n' "$REPLY" "$REPLY" ;;
         check) /usr/bin/sudo -n -l /usr/bin/loginctl enable-linger "$REPLY" >/dev/null || { warn 'linger rule is unavailable'; return 1; } ;;
         install|remove)
-            warn "run the one-time administrator action: sudo /opt/tmux-manager/sbin/tmux-manager-sudoers $1"
-            return 1 ;;
+            /usr/bin/sudo -n /opt/tmux-manager/sbin/tmux-manager-sudoers "$1" || {
+                warn "administrator authorization required; run sudo /opt/tmux-manager/sbin/tmux-manager-sudoers $1"
+                return 1
+            } ;;
         *) die 'usage: tmux-manager sudoers preview|check|install|remove' ;;
     esac
 }

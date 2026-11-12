@@ -26,4 +26,10 @@ if grep -q systemctl "$scratch/calls"; then exit 1; fi
 if TEST_USER='bad,ALL' cmd_sudoers preview; then exit 1; fi
 if (cmd_sudoers preview extra); then exit 1; fi
 if (cmd_sudoers invalid); then exit 1; fi
+cmd_sudoers install
+cmd_sudoers remove
+grep -Fxq 'sudo -n /opt/tmux-manager/sbin/tmux-manager-sudoers install' "$scratch/calls"
+grep -Fxq 'sudo -n /opt/tmux-manager/sbin/tmux-manager-sudoers remove' "$scratch/calls"
+if FAIL_SUDO=1 cmd_sudoers install; then exit 1; fi
+bash tests/admin-installer.sh
 echo 'PASS: exact sudoers policy and noninteractive setup'
