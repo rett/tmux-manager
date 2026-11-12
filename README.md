@@ -91,6 +91,11 @@ stop configured session units respectively. Unconfigured sessions are not
 targeted by these commands. Directly killing a session leaves its oneshot unit
 active; a subsequent `start` repairs it.
 
+`service status|start|stop|restart|enable|disable boot|server` controls the
+named user unit. Stopping or restarting the server affects every session it
+owns; the boot unit starts or stops configured sessions. `service status
+session NAME` inspects one session unit. Status accepts `--json` for scripts.
+
 ## Development and tests
 
 Run `make doctor` then `bash tests/run.sh`. The lifecycle test uses a private

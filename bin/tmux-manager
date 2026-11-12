@@ -116,6 +116,9 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/systemd.sh
 source "$LIB_DIR/systemd.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/automation.sh
+source "$LIB_DIR/automation.sh"
 
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
@@ -402,6 +405,8 @@ Commands:
   sessions           print configured session names (scripting/completion)
   boot               start all enabled sessions (used by tmux-manager@.service)
   shutdown           kill all managed sessions (used by tmux-manager@.service)
+  service <action> <boot|server>  control a user service (status supports --json)
+  service status session <name> [--json]  inspect one session service
 
 Config format (~/.tmux-manager/<name>.conf), one file per session:
   SESSION_NAME=dev          session name (default: conf filename)
@@ -432,6 +437,7 @@ main() {
     esac
     require_not_root
     case $cmd in
+        service) cmd_service "$@" ;;
         boot) cmd_boot ;;
         shutdown) cmd_shutdown ;;
         list) cmd_list ;;

@@ -21,7 +21,7 @@ if [[ "$(readlink -f /opt/tmux-manager)" == "$(readlink -f "$SRC")" ]]; then
 else
     install -d -m 0755 /opt/tmux-manager/bin /opt/tmux-manager/lib
     install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
-    install -m 0644 "$SRC/lib/systemd.sh" /opt/tmux-manager/lib/systemd.sh
+    install -m 0644 "$SRC"/lib/*.sh /opt/tmux-manager/lib/
 fi
 install -m 0644 "$SRC/systemd/tmux-manager@.service" /etc/systemd/system/tmux-manager@.service
 install -D -m 0644 "$SRC/completions/tmux-manager.bash" /usr/share/bash-completion/completions/tmux-manager

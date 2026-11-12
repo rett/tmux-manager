@@ -15,3 +15,4 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and refuses existing foreign servers. See the migration instructions.
 - Configuration overrides must match the systemd user manager environment.
 - Renaming a running managed session requires stopping it first.
+- Add explicit user-service control and machine-readable service status.
