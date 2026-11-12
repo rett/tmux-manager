@@ -56,6 +56,7 @@ grep -Fq 'attach-session -t =other' "$CALLS"
 [[ $(bin/tmux-manager service status boot --json) == '{"target":"boot","active":"active","enabled":"enabled"}' ]]
 bin/tmux-manager service restart server
 grep -Fq 'systemctl --user restart tmux-manager-server.service' "$CALLS"
-bin/tmux-manager service status session other --json | grep -Fq '"target":"session"'
+bin/tmux-manager service status session other --json | grep -Fq '"name":"other"'
+[[ $(bin/tmux-manager sessions --json) == '["dev-test@x","other"]' ]]
 if bin/tmux-manager service restart session other; then exit 1; fi
 echo 'PASS: mocked dispatch, disabled start, linger and shutdown failures'

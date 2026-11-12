@@ -16,3 +16,5 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Configuration overrides must match the systemd user manager environment.
 - Renaming a running managed session requires stopping it first.
 - Add explicit user-service control and machine-readable service status.
+- Add JSON session names, persistence setup and an optional exact linger sudoers
+  rule with a separate administrator installer; fix attachment outside tmux.

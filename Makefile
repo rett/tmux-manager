@@ -3,10 +3,10 @@
 # Debian/Ubuntu packages; installation requires administrator privileges.
 bootstrap:
 	sudo apt-get update
-	sudo apt-get install -y bash git make tmux shellcheck systemd
+	sudo apt-get install -y bash git make tmux shellcheck systemd sudo
 
 doctor:
-	@failed=0; for tool in bash git make tmux shellcheck systemctl systemd-escape loginctl; do \
+	@failed=0; for tool in bash git make tmux shellcheck systemctl systemd-escape loginctl sudo visudo; do \
 	  if command -v "$$tool" >/dev/null 2>&1; then \
 	    if [ "$$tool" = tmux ]; then version=$$(tmux -V); else version=$$("$$tool" --version 2>&1 | head -n 1); fi; \
 	    printf 'ok: %s %s\n' "$$tool" "$$version"; \

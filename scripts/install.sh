@@ -23,6 +23,8 @@ else
     install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
     install -m 0644 "$SRC"/lib/*.sh /opt/tmux-manager/lib/
 fi
+install -d -m 0755 /opt/tmux-manager/sbin
+install -m 0755 "$SRC/scripts/tmux-manager-sudoers" /opt/tmux-manager/sbin/tmux-manager-sudoers
 install -m 0644 "$SRC/systemd/tmux-manager@.service" /etc/systemd/system/tmux-manager@.service
 install -D -m 0644 "$SRC/completions/tmux-manager.bash" /usr/share/bash-completion/completions/tmux-manager
 ln -sfn /opt/tmux-manager/bin/tmux-manager /usr/local/bin/tmux-manager

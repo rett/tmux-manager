@@ -19,7 +19,11 @@ cmd_service() {
                 state=$(systemctl --user show "$unit" -p ActiveState --value) || return 1
                 enabled=$(systemctl --user show "$unit" -p UnitFileState --value) || return 1
                 [[ $state =~ ^[a-z-]*$ && $enabled =~ ^[a-z-]*$ ]] || { warn 'invalid service state'; return 1; }
-                printf '{"target":"%s","active":"%s","enabled":"%s"}\n' "$target" "$state" "$enabled"
+                if [[ $target == session ]]; then
+                    printf '{"target":"session","name":"%s","active":"%s","enabled":"%s"}\n' "$name" "$state" "$enabled"
+                else
+                    printf '{"target":"%s","active":"%s","enabled":"%s"}\n' "$target" "$state" "$enabled"
+                fi
             elif [[ $# -eq 0 ]]; then
                 systemctl --user --no-pager status "$unit"
             else

@@ -95,6 +95,24 @@ active; a subsequent `start` repairs it.
 named user unit. Stopping or restarting the server affects every session it
 owns; the boot unit starts or stops configured sessions. `service status
 session NAME` inspects one session unit. Status accepts `--json` for scripts.
+`sessions --json` prints an array of configured names. Commands return zero on
+success and nonzero on errors; diagnostics go to standard error.
+
+### Optional unattended persistence setup
+
+`tmux-manager sudoers preview` prints the exact rule for the invoking user;
+`tmux-manager sudoers check` checks whether sudo currently permits that command.
+Installation is optional and needs a one-time administrator action after the
+normal installation: `sudo /opt/tmux-manager/sbin/tmux-manager-sudoers install`.
+The main CLI provides `sudoers install` and `sudoers remove` instructions for
+these administrator actions. The helper validates the rule with visudo and
+refuses to overwrite or remove a different or unsafe file. Removal uses the
+same command with `remove`. The rule grants only `/usr/bin/loginctl
+enable-linger` for the invoking user; user service control requires no root.
+Once authorized, `tmux-manager service setup` uses noninteractive sudo to enable
+linger, reloads the user manager and enables and starts the boot service. That
+service starts all enabled configured sessions. Failed authorization returns an
+error without prompting. The initial administrator action may prompt normally.
 
 ## Development and tests
 

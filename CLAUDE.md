@@ -10,7 +10,7 @@ unowned server. Do not restart services during installation or tests.
 This project has no tool-specific setup file. The targets below are the
 specification; any agent or person sets a checkout up with them.
 
-- Prerequisites: bash, git, make, tmux (with `-N` support), ShellCheck, and
+- Prerequisites: bash, git, make, tmux (with `-N` support), ShellCheck, sudo and visudo, and
   systemd user tools (`systemctl`, `systemd-escape`, `loginctl`).
 - Install or update everything: `make bootstrap`. It is idempotent. A line that
   needs root starts with `sudo` and says what it changes. Preview without

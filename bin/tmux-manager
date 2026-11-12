@@ -119,6 +119,9 @@ source "$LIB_DIR/systemd.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/automation.sh
 source "$LIB_DIR/automation.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/admin.sh
+source "$LIB_DIR/admin.sh"
 
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
@@ -376,9 +379,9 @@ cmd_attach() {
     local name=$1 conf
     conf=$(resolve_conf "$name") || exit 1
     session_running "$name" || die "session '$name' is not running (try: $PROG start $name)"
-    local socket
+    local socket current_tmux=${TMUX:-}
     socket="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
-    if [[ -n ${TMUX:-} && ${TMUX%%,*} == "$socket" ]]; then
+    if [[ -n $current_tmux && ${current_tmux%%,*} == "$socket" ]]; then
         command tmux -L default -N switch-client -t "=$name"
     else
         unset TMUX
@@ -407,6 +410,9 @@ Commands:
   shutdown           kill all managed sessions (used by tmux-manager@.service)
   service <action> <boot|server>  control a user service (status supports --json)
   service status session <name> [--json]  inspect one session service
+  service setup      enable linger and boot management (requires sudoers rule)
+  sudoers preview|check|install|remove  manage the optional linger rule
+  sessions --json    list configured session names as JSON
 
 Config format (~/.tmux-manager/<name>.conf), one file per session:
   SESSION_NAME=dev          session name (default: conf filename)
@@ -437,7 +443,8 @@ main() {
     esac
     require_not_root
     case $cmd in
-        service) cmd_service "$@" ;;
+        service) if [[ ${1:-} == setup && $# -eq 1 ]]; then cmd_setup; else cmd_service "$@"; fi ;;
+        sudoers) cmd_sudoers "$@" ;;
         boot) cmd_boot ;;
         shutdown) cmd_shutdown ;;
         list) cmd_list ;;
@@ -474,7 +481,9 @@ main() {
             cmd_rename "$1" "$2"
             ;;
         sessions)
-            cmd_sessions
+            if [[ $# -eq 0 ]]; then cmd_sessions
+            elif [[ $# -eq 1 && $1 == --json ]]; then cmd_sessions_json
+            else die 'usage: tmux-manager sessions [--json]'; fi
             ;;
         *)
             usage >&2
