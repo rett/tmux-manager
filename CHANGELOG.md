@@ -5,3 +5,6 @@ All notable changes are recorded here. The format follows
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Development
+- Add bootstrap, environment diagnostics and static checks to CI.

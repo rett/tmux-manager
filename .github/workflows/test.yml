@@ -25,4 +25,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Tests
-        run: bash tests/run.sh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux shellcheck
+          make doctor
+          bash tests/static.sh
