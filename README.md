@@ -144,3 +144,6 @@ Service mutations require the invoking environment to match the user manager;
 starting or restarting services also requires lingering to be enabled.
 Environment values reported with systemd ANSI-C quoting are supported.
 
+Development bootstrap supports apt-get and pacman; `make -n bootstrap` previews
+the required package installation without upgrading the system.
+

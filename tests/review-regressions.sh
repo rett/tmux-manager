@@ -49,3 +49,24 @@ for encoded in "\$'bad\\x00'" "\$'bad\\000'" "\$'bad\\x1'" "\$'bad\\q'" "\$'unfi
     if decode_environment_value "$encoded"; then exit 1; fi
 done
 echo 'PASS: safe systemd ANSI-C environment decoding'
+
+# A shell wrapper must not satisfy the executable prerequisite.
+mkdir "$scratch/empty"
+sed -n '/^require_tmux() {/,/^}/p' bin/tmux-manager >"$scratch/require-tmux.sh"
+# The isolated PATH and functions model a wrapper without an executable.
+# shellcheck disable=SC2123,SC2329,SC1091
+if ( PATH="$scratch/empty"; tmux() { :; }; die() { exit 1; }; \
+     source "$scratch/require-tmux.sh"; require_tmux ); then exit 1; fi
+echo 'PASS: missing tmux executable is detected'
+
+mkdir "$scratch/packages"
+for manager in pacman apt-get; do
+    touch "$scratch/packages/$manager"
+    chmod +x "$scratch/packages/$manager"
+    PATH="$scratch/packages" /usr/bin/make -n bootstrap >"$scratch/preview"
+    grep -Fq "sudo $manager " "$scratch/preview"
+done
+rm "$scratch/packages/"*
+if PATH="$scratch/packages" /usr/bin/make bootstrap >"$scratch/preview" 2>&1; then exit 1; fi
+grep -Fq 'unsupported:' "$scratch/preview"
+echo 'PASS: mocked package manager detection and dry-run'

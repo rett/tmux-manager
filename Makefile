@@ -1,9 +1,16 @@
 .PHONY: bootstrap doctor
 
-# Debian/Ubuntu packages; installation requires administrator privileges.
+# Installation requires administrator privileges. No system upgrade is run.
+PACKAGE_MANAGER := $(shell if command -v apt-get >/dev/null 2>&1; then printf apt; elif command -v pacman >/dev/null 2>&1; then printf pacman; else printf unsupported; fi)
+
 bootstrap:
-	sudo apt-get update
+ifeq ($(PACKAGE_MANAGER),apt)
 	sudo apt-get install -y bash git make tmux shellcheck systemd sudo
+else ifeq ($(PACKAGE_MANAGER),pacman)
+	sudo pacman -S --needed --noconfirm bash git make tmux shellcheck systemd sudo
+else
+	@printf '%s\n' 'unsupported: install prerequisites with apt-get or pacman' >&2; exit 1
+endif
 
 doctor:
 	@failed=0; for tool in bash git make tmux shellcheck systemctl systemd-escape loginctl sudo visudo; do \
