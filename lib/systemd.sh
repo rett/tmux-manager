@@ -52,11 +52,15 @@ check_manager_environment() {
     done
 }
 
-require_backend() {
+require_persistence() {
     local linger
     check_manager_environment || return 1
     linger=$(loginctl show-user "$(id -u)" -p Linger --value) || { warn "cannot check lingering"; return 1; }
     [[ $linger == yes ]] || { warn "enable persistence first: sudo loginctl enable-linger $(id -un)"; return 1; }
+}
+
+require_backend() {
+    require_persistence || return 1
     systemctl --user start "${TMUX_MANAGER_UNIT_PREFIX:-tmux-manager}-server.service" || return 1
     service_ready
 }

@@ -468,7 +468,7 @@ main() {
         restart)
             [[ $# -eq 1 ]] || die "usage: $PROG restart <session>"
             resolve_conf "$1" >/dev/null || exit 1
-            require_backend
+            require_backend || return 1
             service_action restart "$1"
             ;;
         _server) service_server ;;

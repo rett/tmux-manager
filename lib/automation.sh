@@ -31,6 +31,11 @@ cmd_service() {
             fi ;;
         start|stop|restart|enable|disable)
             [[ $# -eq 0 && $target != session ]] || die 'invalid service arguments'
+            if [[ $action == start || $action == restart ]]; then
+                require_persistence || return 1
+            else
+                check_manager_environment || return 1
+            fi
             systemctl --user "$action" "$unit" ;;
         *) die 'unknown service action' ;;
     esac

@@ -140,3 +140,6 @@ The installer requires root-owned, non-group/world-writable directories under
 migration, preserve the existing checkout and sessions, remove the old link
 only after arranging downtime, and install into a trusted root-owned directory.
 
+Service mutations require the invoking environment to match the user manager;
+starting or restarting services also requires lingering to be enabled.
+

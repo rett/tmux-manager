@@ -10,6 +10,7 @@ die() { warn "$*"; exit 1; }
 id() { [[ $1 == -ru ]]; printf '1234\n'; }
 getent() { printf '%s:x:1234:1234::/nonexistent:/bin/false\n' "${TEST_USER:-testuser}"; }
 systemctl() { printf 'systemctl %s\n' "$*" >>"$scratch/calls"; }
+check_manager_environment() { [[ ${MISMATCH:-0} != 1 ]]; }
 function /usr/bin/sudo() {
     printf 'sudo %s\n' "$*" >>"$scratch/calls"
     [[ ${FAIL_SUDO:-0} != 1 ]]
@@ -21,6 +22,8 @@ cmd_setup
 grep -Fxq 'sudo -n /usr/bin/loginctl enable-linger testuser' "$scratch/calls"
 grep -Fxq 'systemctl --user enable --now tmux-manager.service' "$scratch/calls"
 : >"$scratch/calls"
+if MISMATCH=1 cmd_setup; then exit 1; fi
+[[ ! -s $scratch/calls ]]
 if FAIL_SUDO=1 cmd_setup; then exit 1; fi
 if grep -q systemctl "$scratch/calls"; then exit 1; fi
 if TEST_USER='bad,ALL' cmd_sudoers preview; then exit 1; fi
