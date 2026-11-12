@@ -9,7 +9,7 @@ fi
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ ! -f $SRC/bin/tmux-manager || ! -f $SRC/systemd/tmux-manager@.service ]]; then
+if [[ ! -f $SRC/bin/tmux-manager || ! -f $SRC/systemd/user/tmux-manager.service ]]; then
     echo "install.sh: cannot find project files under $SRC" >&2
     exit 1
 fi
@@ -19,22 +19,28 @@ if [[ "$(readlink -f /opt/tmux-manager)" == "$(readlink -f "$SRC")" ]]; then
     echo "install.sh: /opt/tmux-manager already points at $SRC, skipping copy"
     chmod 0755 "$SRC/bin/tmux-manager"
 else
-    install -d -m 0755 /opt/tmux-manager/bin
+    install -d -m 0755 /opt/tmux-manager/bin /opt/tmux-manager/lib
     install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
+    install -m 0644 "$SRC"/lib/*.sh /opt/tmux-manager/lib/
 fi
+install -d -m 0755 /opt/tmux-manager/sbin
+install -m 0755 "$SRC/scripts/tmux-manager-sudoers" /opt/tmux-manager/sbin/tmux-manager-sudoers
 install -m 0644 "$SRC/systemd/tmux-manager@.service" /etc/systemd/system/tmux-manager@.service
 install -D -m 0644 "$SRC/completions/tmux-manager.bash" /usr/share/bash-completion/completions/tmux-manager
 ln -sfn /opt/tmux-manager/bin/tmux-manager /usr/local/bin/tmux-manager
+install -d -m 0755 /etc/systemd/user
+install -m 0644 "$SRC"/systemd/user/*.service /etc/systemd/user/
 systemctl daemon-reload
 
 cat <<EOF
 tmux-manager installed.
 
-Next steps (per user):
-  mkdir -p ~/.tmux-manager
-  cp $SRC/examples/dev.conf ~/.tmux-manager/   # edit to taste
-  sudo systemctl enable --now tmux-manager@${SUDO_USER:-<user>}
+Next steps (run the user commands as the target user):
+  sudo loginctl enable-linger <user>
+  systemctl --user daemon-reload
+  systemctl --user enable --now tmux-manager.service
 
-After upgrading, restart running instances:
-  sudo systemctl try-restart 'tmux-manager@*'
+Migration: do not restart an existing system tmux-manager@<user> unit or kill
+its server until every valuable session has finished. The new server refuses
+to adopt an existing server. See README.md for planned migration steps.
 EOF

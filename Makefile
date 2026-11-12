@@ -1,12 +1,17 @@
-# Set up and check a checkout. Fill in both targets, then describe them in the
-# "Development environment" section of AGENTS.md.
 .PHONY: bootstrap doctor
 
+# Debian/Ubuntu packages; installation requires administrator privileges.
 bootstrap:
-	@echo "bootstrap: nothing is installed yet."
-	@echo "Edit this target so it installs what the project needs, idempotently (sudo only on the lines that need root)."
+	sudo apt-get update
+	sudo apt-get install -y bash git make tmux shellcheck systemd sudo
 
 doctor:
-	@echo "missing: the doctor target checks nothing yet."
-	@echo "Edit it to print one line per item (the tool and its version), starting a line with missing when an item is absent."
-	@false
+	@failed=0; for tool in bash git make tmux shellcheck systemctl systemd-escape loginctl sudo visudo; do \
+	  if command -v "$$tool" >/dev/null 2>&1; then \
+	    if [ "$$tool" = tmux ]; then version=$$(tmux -V); else version=$$("$$tool" --version 2>&1 | head -n 1); fi; \
+	    printf 'ok: %s %s\n' "$$tool" "$$version"; \
+	  else printf 'missing: %s\n' "$$tool"; failed=1; fi; \
+	done; \
+	if tmux -h 2>&1 | head -n 1 | grep -qE '\[-[^]]*N'; then printf 'ok: tmux supports -N\n'; else printf 'fail: tmux lacks -N\n'; failed=1; fi; \
+	if bash -c '(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) ))'; then printf 'ok: bash >= 4.4\n'; else printf 'fail: bash >= 4.4 required\n'; failed=1; fi; \
+	exit $$failed
