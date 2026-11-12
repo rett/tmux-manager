@@ -19,3 +19,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add JSON session names, persistence setup and an optional exact linger sudoers
   rule with a separate administrator installer; fix attachment outside tmux.
 - Make sudoers install and remove available through noninteractive CLI actions.
+# Unreleased
+
+- Resolve installed command symlinks and reject untrusted installation paths.

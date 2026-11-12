@@ -24,7 +24,7 @@ die()  { warn "$*"; exit 1; }
 tmux() { ( unset TMUX; command tmux -L default -N "$@" ); }
 
 require_tmux() {
-    command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
+    type -P tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
 }
 
 require_not_root() {
@@ -112,16 +112,17 @@ load_config() {
 }
 
 # Service helpers live separately to keep parsing and session setup readable.
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}") || die "cannot resolve executable path"
+LIB_DIR="$(cd "$(dirname "$SCRIPT_PATH")/../lib" && pwd)" || die "cannot locate libraries"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/systemd.sh
-source "$LIB_DIR/systemd.sh"
+source "$LIB_DIR/systemd.sh" || die "cannot load systemd library"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/automation.sh
-source "$LIB_DIR/automation.sh"
+source "$LIB_DIR/automation.sh" || die "cannot load automation library"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/admin.sh
-source "$LIB_DIR/admin.sh"
+source "$LIB_DIR/admin.sh" || die "cannot load admin library"
 
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
