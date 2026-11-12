@@ -33,3 +33,19 @@ if trusted "$scratch/opt/link" dir; then exit 1; fi
 ln -s /nonexistent "$scratch/opt/tmux-manager/sbin/tmux-manager-sudoers"
 if trusted "$scratch/opt/tmux-manager/sbin/tmux-manager-sudoers" file; then exit 1; fi
 echo 'PASS: simulated installer trust checks'
+
+# shellcheck source=lib/systemd.sh
+source lib/systemd.sh
+assert_decode() {
+    decode_environment_value "$1" || exit 1
+    [[ $REPLY == "$2" ]] || exit 1
+}
+assert_decode "\$'space path'" 'space path'
+assert_decode "\$'it\\'s \\\\ \$HOME'" "it's \\ \$HOME"
+assert_decode "\$'a\\nb\\t\\x21\\041'" $'a\nb\t!!'
+assert_decode "\$'literal \$(touch /never)'" "literal \$(touch /never)"
+assert_decode "'old'\\ path" 'old path'
+for encoded in "\$'bad\\x00'" "\$'bad\\000'" "\$'bad\\x1'" "\$'bad\\q'" "\$'unfinished" "\$'bad\\"; do
+    if decode_environment_value "$encoded"; then exit 1; fi
+done
+echo 'PASS: safe systemd ANSI-C environment decoding'

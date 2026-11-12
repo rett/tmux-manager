@@ -23,3 +23,4 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Resolve installed command symlinks and reject untrusted installation paths.
 - Check manager settings before service mutations and enforce persistence for starts.
+- Decode systemd ANSI-C quoted environment values without evaluating them.

@@ -142,4 +142,5 @@ only after arranging downtime, and install into a trusted root-owned directory.
 
 Service mutations require the invoking environment to match the user manager;
 starting or restarting services also requires lingering to be enabled.
+Environment values reported with systemd ANSI-C quoting are supported.
 
