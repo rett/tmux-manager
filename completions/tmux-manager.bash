@@ -1,7 +1,7 @@
 # bash completion for tmux-manager
 _tmux_manager() {
     local cur=${COMP_WORDS[COMP_CWORD]}
-    local commands="list enable disable start stop attach rename sessions boot shutdown help"
+    local commands="list enable disable start stop restart attach rename sessions boot shutdown help"
     COMPREPLY=()
 
     if [[ $COMP_CWORD -eq 1 ]]; then
@@ -10,7 +10,7 @@ _tmux_manager() {
     fi
 
     case ${COMP_WORDS[1]} in
-        enable | disable | start | stop | attach | rename)
+        enable | disable | start | stop | restart | attach | rename)
             # rename's third argument is the new (free-form) name.
             if [[ $COMP_CWORD -eq 2 ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "$(tmux-manager sessions 2>/dev/null)" -- "$cur")

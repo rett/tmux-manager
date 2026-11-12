@@ -19,6 +19,10 @@ log()  { printf '%s: %s\n' "$PROG" "$*"; }
 warn() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
+# Always use the default socket, even when invoked inside a different server.
+# -N forbids a client from spawning a server outside its owning service.
+tmux() { ( unset TMUX; command tmux -L default -N "$@" ); }
+
 require_tmux() {
     command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
 }
@@ -107,26 +111,11 @@ load_config() {
     fi
 }
 
-# Decide how to spawn the tmux server so it outlives the caller's login.
-# A bare 'tmux' from an SSH shell lands in that login's session-NNN.scope,
-# which logind reaps at logout when KillUserProcesses=yes. Interactively we
-# instead launch the server's first process in a transient scope owned by the
-# *user* systemd manager; with lingering on, user@UID.service outlives every
-# login session, so the server survives logout. Sets SERVER_LAUNCH to the
-# command prefix, or leaves it empty (historical bare 'tmux') when wrapping
-# does not apply: the unit (TMUX_MANAGER_FROM_UNIT=1) owns the server in its
-# own cgroup, a server is already up, or no user manager is reachable.
-declare -a SERVER_LAUNCH=()
-ensure_server_launch() {
-    SERVER_LAUNCH=()
-    tmux list-sessions >/dev/null 2>&1 && return 0          # server already up
-    [[ -n ${TMUX_MANAGER_FROM_UNIT:-} ]] && return 0        # unit owns the server
-    command -v systemd-run >/dev/null 2>&1 || return 0
-    [[ -n ${XDG_RUNTIME_DIR:-} ]] || return 0
-    systemctl --user show -p Version >/dev/null 2>&1 || return 0   # user mgr reachable?
-    systemctl --user reset-failed tmux-server.scope 2>/dev/null    # clear stale name
-    SERVER_LAUNCH=(systemd-run --user --scope --quiet --unit=tmux-server)
-}
+# Service helpers live separately to keep parsing and session setup readable.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/systemd.sh
+source "$LIB_DIR/systemd.sh"
 
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
@@ -147,9 +136,8 @@ start_from_conf() {
         dir=$HOME
     fi
 
-    # Pick the launch prefix for the process that may spawn the server, so an
-    # interactively-started server lands somewhere that survives logout.
-    ensure_server_launch
+    # The session service already depends on the persistent server.
+    SERVER_LAUNCH=()
 
     local entry wname wcmd wid first=1
     if [[ ${#CFG_WINDOWS[@]} -eq 0 ]]; then
@@ -242,7 +230,7 @@ cmd_boot() {
         fi
         seen="$seen$CFG_SESSION_NAME "
         attempted=$((attempted + 1))
-        if start_from_conf "$conf"; then
+        if cmd_start "$CFG_SESSION_NAME"; then
             started=$((started + 1))
         fi
     done
@@ -259,30 +247,19 @@ cmd_boot() {
 
 cmd_shutdown() {
     require_tmux
-    local conf remaining
+    local conf failed=0
     if [[ -d $CONF_DIR ]]; then
         for conf in "$CONF_DIR"/*.conf; do
             [[ -e $conf ]] || break
             load_config "$conf" 2>/dev/null || continue
-            if session_running "$CFG_SESSION_NAME"; then
-                if tmux kill-session -t "=$CFG_SESSION_NAME" 2>/dev/null; then
-                    log "killed session '$CFG_SESSION_NAME'"
-                else
-                    warn "failed to kill session '$CFG_SESSION_NAME'"
-                fi
+            if ! cmd_stop "$CFG_SESSION_NAME"; then
+                warn "failed to stop session '$CFG_SESSION_NAME'"
+                failed=1
             fi
         done
     fi
-    remaining=$(tmux list-sessions -F '#S' 2>/dev/null || true)
-    if [[ -n $remaining ]]; then
-        log "leaving tmux server up: unmanaged sessions remain: $(tr '\n' ' ' <<<"$remaining")"
-    else
-        # tmux's exit-empty (default on) already stops the server when the
-        # last session dies; this covers 'exit-empty off' users.
-        tmux kill-server 2>/dev/null || true
-    fi
-    # A stop must never flip the unit to failed.
-    return 0
+
+    return "$failed"
 }
 
 cmd_list() {
@@ -328,6 +305,8 @@ cmd_rename() {
     find_conf_for_session "$new" >/dev/null && die "a session config named '$new' already exists"
     session_running "$new" && die "a running session named '$new' already exists"
 
+    session_running "$old" && die "stop '$old' before renaming its service and config"
+    service_action stop "$old" || return 1
     if grep -qE '^[[:space:]]*SESSION_NAME=' "$conf"; then
         sed -i -E "s/^[[:space:]]*SESSION_NAME=.*/SESSION_NAME=$new/" "$conf"
     fi
@@ -341,11 +320,7 @@ cmd_rename() {
     fi
     log "renamed session config '$old' -> '$new' ($conf)"
 
-    if session_running "$old"; then
-        tmux rename-session -t "=$old" "$new" \
-            && log "renamed running session '$old' -> '$new'" \
-            || warn "failed to rename running session '$old'"
-    fi
+
 }
 
 set_enabled() {
@@ -368,7 +343,11 @@ cmd_start() {
     local name=$1 conf
     conf=$(resolve_conf "$name") || exit 1
     # Manual start is explicit intent; ENABLED only gates boot.
-    start_from_conf "$conf" || die "failed to start session '$name'"
+    if [[ ${TMUX_MANAGER_INTERNAL:-} == session ]]; then
+        start_from_conf "$conf" || return 1
+    else
+        service_start "$name"
+    fi
 }
 
 cmd_stop() {
@@ -377,6 +356,10 @@ cmd_stop() {
     # Refuse to touch sessions not defined by a conf file.
     conf=$(find_conf_for_session "$name") \
         || die "no session config for '$name' in $CONF_DIR (refusing to kill unmanaged sessions)"
+    if [[ ${TMUX_MANAGER_INTERNAL:-} != session ]]; then
+        service_action stop "$name"
+        return $?
+    fi
     if session_running "$name"; then
         tmux kill-session -t "=$name" || die "failed to kill session '$name'"
         log "stopped session '$name'"
@@ -390,10 +373,13 @@ cmd_attach() {
     local name=$1 conf
     conf=$(resolve_conf "$name") || exit 1
     session_running "$name" || die "session '$name' is not running (try: $PROG start $name)"
-    if [[ -n ${TMUX:-} ]]; then
-        exec tmux switch-client -t "=$name"
+    local socket
+    socket="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+    if [[ -n ${TMUX:-} && ${TMUX%%,*} == "$socket" ]]; then
+        command tmux -L default -N switch-client -t "=$name"
     else
-        exec tmux attach-session -t "=$name"
+        unset TMUX
+        exec tmux -L default -N attach-session -t "=$name"
     fi
 }
 
@@ -408,10 +394,11 @@ Commands:
   enable <session>   start the session at boot (sets ENABLED=true)
   disable <session>  do not start the session at boot (sets ENABLED=false)
   start <session>    start a session now (regardless of ENABLED)
-  stop <session>     kill a managed session (never touches unmanaged sessions)
+  stop <session>     stop a managed session service
+  restart <session>  restart only this session service
   attach <session>   attach to a running managed session
   rename <old> <new> rename a session: conf file, tmux target references in
-                     POST_CMDs, and the running session if there is one
+                     POST_CMDs (session must be stopped first)
   sessions           print configured session names (scripting/completion)
   boot               start all enabled sessions (used by tmux-manager@.service)
   shutdown           kill all managed sessions (used by tmux-manager@.service)
@@ -430,6 +417,7 @@ EOF
 }
 
 main() {
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     local cmd=${1:-}
     if [[ -z $cmd ]]; then
         usage >&2
@@ -463,6 +451,14 @@ main() {
             [[ $# -eq 1 ]] || die "usage: $PROG stop <session>"
             cmd_stop "$1"
             ;;
+        restart)
+            [[ $# -eq 1 ]] || die "usage: $PROG restart <session>"
+            resolve_conf "$1" >/dev/null || exit 1
+            require_backend
+            service_action restart "$1"
+            ;;
+        _server) service_server ;;
+        _ready) service_ready ;;
         attach)
             [[ $# -eq 1 ]] || die "usage: $PROG attach <session>"
             cmd_attach "$1"
