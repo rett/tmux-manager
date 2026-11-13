@@ -1,0 +1,34 @@
+#!/bin/bash
+# One-time administrator action. Never reads the caller's configuration.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+fail() { printf 'tmux-manager-sudoers: %s\n' "$*" >&2; exit 1; }
+[[ $EUID -eq 0 && $# -eq 1 ]] || fail 'run with sudo and one action: install or remove'
+[[ $1 == install || $1 == remove ]] || fail 'unknown action'
+[[ ${SUDO_UID:-} =~ ^[1-9][0-9]*$ ]] || fail 'cannot identify invoking user'
+record=$(/usr/bin/getent passwd "$SUDO_UID") || fail 'cannot resolve invoking user'
+user=${record%%:*}
+[[ $user =~ ^[a-z_][a-z0-9_-]*$ && ${SUDO_USER:-} == "$user" ]] || fail 'unsafe or inconsistent invoking user'
+dir=/etc/sudoers.d
+[[ -d $dir && ! -L $dir ]] || fail 'unsafe sudoers directory'
+case $(/usr/bin/stat -c '%u:%g:%a' "$dir") in
+    0:0:700|0:0:750|0:0:755) ;;
+    *) fail 'unsafe sudoers directory ownership or permissions' ;;
+esac
+dest=$dir/tmux-manager-$user
+tmp=$(/usr/bin/mktemp "$dir/.tmux-manager-XXXXXXXX") || fail 'cannot create temporary policy'
+trap '/usr/bin/rm -f -- "$tmp"' EXIT
+printf '%s ALL=(root) NOPASSWD: /usr/bin/loginctl enable-linger %s\n' "$user" "$user" >"$tmp"
+/usr/sbin/visudo -c -f "$tmp" >/dev/null || fail 'policy validation failed'
+if [[ -e $dest || -L $dest ]]; then
+    [[ -f $dest && ! -L $dest && $(/usr/bin/stat -c '%u:%a:%h' "$dest") == 0:440:1 ]] || fail 'unsafe existing policy'
+    /usr/bin/cmp -s "$tmp" "$dest" || fail 'existing policy is not owned by this tool'
+    if [[ $1 == remove ]]; then /usr/bin/rm -- "$dest"; exit 0; fi
+elif [[ $1 == remove ]]; then
+    fail 'policy does not exist'
+fi
+/usr/bin/chown root:root "$tmp"
+/usr/bin/chmod 0440 "$tmp"
+/usr/bin/mv -T -- "$tmp" "$dest"
+printf 'installed %s\n' "$dest"

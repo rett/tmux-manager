@@ -1,41 +1,25 @@
-# tmux-manager
+# tmux-manager development
 
-Systemd-managed per-user tmux sessions. A system-level template unit
-(`tmux-manager@<user>.service`) starts each user's enabled tmux sessions at
-boot from config files in `~/.tmux-manager/*.conf`, managed by the
-`tmux-manager` CLI.
+The CLI uses exact tmux targets and captured window IDs; commands are sent
+literally followed by Enter. Keep shell files under 500 lines. The persistent
+user server owns the default socket; per-session units must never start an
+unowned server. Do not restart services during installation or tests.
 
-## Layout
+## Development environment (from AGENTS.md)
 
-- `bin/tmux-manager` — bash CLI: `boot`/`shutdown` (called by the unit), `list`, `enable`, `disable`, `start`, `stop`, `attach`
-- `systemd/tmux-manager@.service` — system template unit (`Type=oneshot`, `RemainAfterExit=yes`, `User=%i`)
-- `examples/*.conf` — sample session configs
-- `scripts/install.sh` — installs to `/opt/tmux-manager/bin`, `/etc/systemd/system`, and symlinks into `/usr/local/bin`
+This project has no tool-specific setup file. The targets below are the
+specification; any agent or person sets a checkout up with them.
 
-## Key paths
-
-- Session configs: `~/.tmux-manager/*.conf` (override with `TMUX_MANAGER_CONF_DIR`)
-- Installed script: `/opt/tmux-manager/bin/tmux-manager`
-- Unit: `/etc/systemd/system/tmux-manager@.service`; enable per user with `sudo systemctl enable --now tmux-manager@<user>`
-
-## Conventions
-
-- tmux session targets always use exact-match syntax (`-t "=$name"`); windows are targeted by captured `#{window_id}`, never by index or name.
-- The CLI uses `set -uo pipefail` without `-e` (expected-nonzero tmux/grep calls); errors are handled explicitly with `|| return 1` / `die`.
-- Window commands are sent with `send-keys -l` plus a separate `Enter`, so the window survives command exit and key-name tokens stay literal.
-- Keep files under 500 lines.
-
-## Testing
-
-- Static: `bash -n bin/tmux-manager scripts/install.sh`; `shellcheck` both.
-- Isolated functional test (touches neither the real tmux server nor real configs):
-  `export TMUX_TMPDIR=$(mktemp -d) TMUX_MANAGER_CONF_DIR=$(mktemp -d)`, copy
-  `examples/*.conf` into the conf dir, then exercise `list`, `start`, `stop`,
-  `boot`, `shutdown`, `enable`, `disable`.
-- Unit-level: `scripts/install.sh`, `sudo systemctl start tmux-manager@<user>`,
-  inspect `journalctl -u tmux-manager@<user>` and `tmux ls`.
-
-## Git
-
-- git-flow: `master` holds releases, `develop` is the integration branch; feature branches come off `develop`.
-- Never reference Claude or AI assistance in commit messages, attributions, or comments.
+- Prerequisites: bash, git, make, tmux (with `-N` support), ShellCheck, sudo and visudo, and
+  systemd user tools (`systemctl`, `systemd-escape`, `loginctl`).
+- Install or update everything: `make bootstrap`. It is idempotent. A line that
+  needs root starts with `sudo` and says what it changes. Preview without
+  changes: `make -n bootstrap`.
+- Verify a checkout: `make doctor`. It prints one line per item and exits
+  non-zero when something is missing: a line starting `missing`, `fail` or
+  `error` is a problem, a line starting `expected` is a known failure that is
+  accepted. Run it before the tests and after pulling.
+- Tests: `bash tests/run.sh`.
+- Never run the bootstrap on a checkout you have not reviewed; read the preview first.
+- When the project needs a new tool, add it to the bootstrap, to the doctor and
+  to this list in the same change.

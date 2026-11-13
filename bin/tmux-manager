@@ -19,8 +19,12 @@ log()  { printf '%s: %s\n' "$PROG" "$*"; }
 warn() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
+# Always use the default socket, even when invoked inside a different server.
+# -N forbids a client from spawning a server outside its owning service.
+tmux() { ( unset TMUX; command tmux -L default -N "$@" ); }
+
 require_tmux() {
-    command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
+    type -P tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
 }
 
 require_not_root() {
@@ -107,6 +111,19 @@ load_config() {
     fi
 }
 
+# Service helpers live separately to keep parsing and session setup readable.
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}") || die "cannot resolve executable path"
+LIB_DIR="$(cd "$(dirname "$SCRIPT_PATH")/../lib" && pwd)" || die "cannot locate libraries"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/systemd.sh
+source "$LIB_DIR/systemd.sh" || die "cannot load systemd library"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/automation.sh
+source "$LIB_DIR/automation.sh" || die "cannot load automation library"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/admin.sh
+source "$LIB_DIR/admin.sh" || die "cannot load admin library"
+
 # Create the session described by a conf file. Idempotent: skips if the
 # session already exists. The session counts as started if new-session
 # succeeded; window/POST_CMD failures warn but do not abort.
@@ -126,9 +143,12 @@ start_from_conf() {
         dir=$HOME
     fi
 
+    # The session service already depends on the persistent server.
+    SERVER_LAUNCH=()
+
     local entry wname wcmd wid first=1
     if [[ ${#CFG_WINDOWS[@]} -eq 0 ]]; then
-        tmux new-session -d -s "$name" -c "$dir" \
+        "${SERVER_LAUNCH[@]}" tmux new-session -d -s "$name" -c "$dir" \
             || { warn "$file: failed to create session '$name'"; return 1; }
     else
         for entry in "${CFG_WINDOWS[@]}"; do
@@ -137,7 +157,7 @@ start_from_conf() {
             # Capture the window id: immune to base-index settings in the
             # user's ~/.tmux.conf and to duplicate window names.
             if [[ $first -eq 1 ]]; then
-                wid=$(tmux new-session -d -P -F '#{window_id}' \
+                wid=$("${SERVER_LAUNCH[@]}" tmux new-session -d -P -F '#{window_id}' \
                           -s "$name" -c "$dir" -n "$wname") \
                     || { warn "$file: failed to create session '$name'"; return 1; }
                 first=0
@@ -217,7 +237,7 @@ cmd_boot() {
         fi
         seen="$seen$CFG_SESSION_NAME "
         attempted=$((attempted + 1))
-        if start_from_conf "$conf"; then
+        if cmd_start "$CFG_SESSION_NAME"; then
             started=$((started + 1))
         fi
     done
@@ -234,30 +254,19 @@ cmd_boot() {
 
 cmd_shutdown() {
     require_tmux
-    local conf remaining
+    local conf failed=0
     if [[ -d $CONF_DIR ]]; then
         for conf in "$CONF_DIR"/*.conf; do
             [[ -e $conf ]] || break
             load_config "$conf" 2>/dev/null || continue
-            if session_running "$CFG_SESSION_NAME"; then
-                if tmux kill-session -t "=$CFG_SESSION_NAME" 2>/dev/null; then
-                    log "killed session '$CFG_SESSION_NAME'"
-                else
-                    warn "failed to kill session '$CFG_SESSION_NAME'"
-                fi
+            if ! cmd_stop "$CFG_SESSION_NAME"; then
+                warn "failed to stop session '$CFG_SESSION_NAME'"
+                failed=1
             fi
         done
     fi
-    remaining=$(tmux list-sessions -F '#S' 2>/dev/null || true)
-    if [[ -n $remaining ]]; then
-        log "leaving tmux server up: unmanaged sessions remain: $(tr '\n' ' ' <<<"$remaining")"
-    else
-        # tmux's exit-empty (default on) already stops the server when the
-        # last session dies; this covers 'exit-empty off' users.
-        tmux kill-server 2>/dev/null || true
-    fi
-    # A stop must never flip the unit to failed.
-    return 0
+
+    return "$failed"
 }
 
 cmd_list() {
@@ -283,6 +292,44 @@ cmd_list() {
     done
 }
 
+# Machine-readable list of configured session names (scripting/completion).
+cmd_sessions() {
+    local conf
+    [[ -d $CONF_DIR ]] || return 0
+    for conf in "$CONF_DIR"/*.conf; do
+        [[ -e $conf ]] || break
+        load_config "$conf" 2>/dev/null || continue
+        printf '%s\n' "$CFG_SESSION_NAME"
+    done
+}
+
+cmd_rename() {
+    require_tmux
+    local old=$1 new=$2 conf newconf
+    [[ $old != "$new" ]] || die "old and new name are the same"
+    [[ $new =~ ^[A-Za-z0-9_@-]+$ ]] || die "invalid session name '$new' (allowed: A-Za-z0-9_@-)"
+    conf=$(find_conf_for_session "$old") || die "no session config for '$old' in $CONF_DIR"
+    find_conf_for_session "$new" >/dev/null && die "a session config named '$new' already exists"
+    session_running "$new" && die "a running session named '$new' already exists"
+
+    session_running "$old" && die "stop '$old' before renaming its service and config"
+    service_action stop "$old" || return 1
+    if grep -qE '^[[:space:]]*SESSION_NAME=' "$conf"; then
+        sed -i -E "s/^[[:space:]]*SESSION_NAME=.*/SESSION_NAME=$new/" "$conf"
+    fi
+    # Rewrite tmux target references (=old, =old:win) in POST_CMDs and comments.
+    sed -i -E "s/=${old}([^A-Za-z0-9_@-]|\$)/=${new}\\1/g" "$conf"
+    if [[ $(basename "$conf") == "$old.conf" ]]; then
+        newconf="$CONF_DIR/$new.conf"
+        [[ -e $newconf ]] && die "config file $newconf already exists"
+        mv "$conf" "$newconf"
+        conf=$newconf
+    fi
+    log "renamed session config '$old' -> '$new' ($conf)"
+
+
+}
+
 set_enabled() {
     local name=$1 val=$2 conf
     conf=$(resolve_conf "$name") || exit 1
@@ -303,7 +350,11 @@ cmd_start() {
     local name=$1 conf
     conf=$(resolve_conf "$name") || exit 1
     # Manual start is explicit intent; ENABLED only gates boot.
-    start_from_conf "$conf" || die "failed to start session '$name'"
+    if [[ ${TMUX_MANAGER_INTERNAL:-} == session ]]; then
+        start_from_conf "$conf" || return 1
+    else
+        service_start "$name"
+    fi
 }
 
 cmd_stop() {
@@ -312,6 +363,10 @@ cmd_stop() {
     # Refuse to touch sessions not defined by a conf file.
     conf=$(find_conf_for_session "$name") \
         || die "no session config for '$name' in $CONF_DIR (refusing to kill unmanaged sessions)"
+    if [[ ${TMUX_MANAGER_INTERNAL:-} != session ]]; then
+        service_action stop "$name"
+        return $?
+    fi
     if session_running "$name"; then
         tmux kill-session -t "=$name" || die "failed to kill session '$name'"
         log "stopped session '$name'"
@@ -325,10 +380,13 @@ cmd_attach() {
     local name=$1 conf
     conf=$(resolve_conf "$name") || exit 1
     session_running "$name" || die "session '$name' is not running (try: $PROG start $name)"
-    if [[ -n ${TMUX:-} ]]; then
-        exec tmux switch-client -t "=$name"
+    local socket current_tmux=${TMUX:-}
+    socket="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+    if [[ -n $current_tmux && ${current_tmux%%,*} == "$socket" ]]; then
+        command tmux -L default -N switch-client -t "=$name"
     else
-        exec tmux attach-session -t "=$name"
+        unset TMUX
+        exec tmux -L default -N attach-session -t "=$name"
     fi
 }
 
@@ -343,10 +401,19 @@ Commands:
   enable <session>   start the session at boot (sets ENABLED=true)
   disable <session>  do not start the session at boot (sets ENABLED=false)
   start <session>    start a session now (regardless of ENABLED)
-  stop <session>     kill a managed session (never touches unmanaged sessions)
+  stop <session>     stop a managed session service
+  restart <session>  restart only this session service
   attach <session>   attach to a running managed session
+  rename <old> <new> rename a session: conf file, tmux target references in
+                     POST_CMDs (session must be stopped first)
+  sessions           print configured session names (scripting/completion)
   boot               start all enabled sessions (used by tmux-manager@.service)
   shutdown           kill all managed sessions (used by tmux-manager@.service)
+  service <action> <boot|server>  control a user service (status supports --json)
+  service status session <name> [--json]  inspect one session service
+  service setup      enable linger and boot management (requires sudoers rule)
+  sudoers preview|check|install|remove  manage the optional linger rule
+  sessions --json    list configured session names as JSON
 
 Config format (~/.tmux-manager/<name>.conf), one file per session:
   SESSION_NAME=dev          session name (default: conf filename)
@@ -362,6 +429,7 @@ EOF
 }
 
 main() {
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     local cmd=${1:-}
     if [[ -z $cmd ]]; then
         usage >&2
@@ -376,6 +444,8 @@ main() {
     esac
     require_not_root
     case $cmd in
+        service) if [[ ${1:-} == setup && $# -eq 1 ]]; then cmd_setup; else cmd_service "$@"; fi ;;
+        sudoers) cmd_sudoers "$@" ;;
         boot) cmd_boot ;;
         shutdown) cmd_shutdown ;;
         list) cmd_list ;;
@@ -395,9 +465,26 @@ main() {
             [[ $# -eq 1 ]] || die "usage: $PROG stop <session>"
             cmd_stop "$1"
             ;;
+        restart)
+            [[ $# -eq 1 ]] || die "usage: $PROG restart <session>"
+            resolve_conf "$1" >/dev/null || exit 1
+            require_backend || return 1
+            service_action restart "$1"
+            ;;
+        _server) service_server ;;
+        _ready) service_ready ;;
         attach)
             [[ $# -eq 1 ]] || die "usage: $PROG attach <session>"
             cmd_attach "$1"
+            ;;
+        rename)
+            [[ $# -eq 2 ]] || die "usage: $PROG rename <old> <new>"
+            cmd_rename "$1" "$2"
+            ;;
+        sessions)
+            if [[ $# -eq 0 ]]; then cmd_sessions
+            elif [[ $# -eq 1 && $1 == --json ]]; then cmd_sessions_json
+            else die 'usage: tmux-manager sessions [--json]'; fi
             ;;
         *)
             usage >&2

@@ -1,0 +1,13 @@
+[Unit]
+Description=Managed tmux session %I
+Requires=tmux-manager-server.service
+After=tmux-manager-server.service
+PartOf=tmux-manager-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=TMUX_MANAGER_INTERNAL=session
+ExecStart=/opt/tmux-manager/bin/tmux-manager start %I
+ExecStop=/opt/tmux-manager/bin/tmux-manager stop %I
+TimeoutStopSec=30
