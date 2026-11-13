@@ -50,11 +50,14 @@ for encoded in "\$'bad\\x00'" "\$'bad\\000'" "\$'bad\\x1'" "\$'bad\\q'" "\$'unfi
 done
 echo 'PASS: safe systemd ANSI-C environment decoding'
 
+doctor_path="$scratch/doctor-bin:$PATH"
+
 # A shell wrapper must not satisfy the executable prerequisite.
 mkdir "$scratch/empty"
 sed -n '/^require_tmux() {/,/^}/p' bin/tmux-manager >"$scratch/require-tmux.sh"
 # The isolated PATH and functions model a wrapper without an executable.
-# shellcheck disable=SC2123,SC2329,SC1091
+# The sourced probe calls die indirectly, which older ShellCheck cannot trace.
+# shellcheck disable=SC2123,SC2329,SC1091,SC2317
 if ( PATH="$scratch/empty"; tmux() { :; }; die() { exit 1; }; \
      source "$scratch/require-tmux.sh"; require_tmux ); then exit 1; fi
 echo 'PASS: missing tmux executable is detected'
@@ -70,3 +73,27 @@ rm "$scratch/packages/"*
 if PATH="$scratch/packages" /usr/bin/make bootstrap >"$scratch/preview" 2>&1; then exit 1; fi
 grep -Fq 'unsupported:' "$scratch/preview"
 echo 'PASS: mocked package manager detection and dry-run'
+
+# Older tmux prints an unsupported -h diagnostic before its usage line.
+mkdir "$scratch/doctor-bin"
+cat >"$scratch/doctor-bin/tmux" <<'SH'
+#!/bin/bash
+case $1 in
+    -V) printf 'tmux 3.4\n' ;;
+    -h)
+        printf 'tmux: unknown option -- h\n' >&2
+        if [[ ${TEST_TMUX_NO_N:-0} == 1 ]]; then
+            printf 'usage: tmux [-2CDluVv] [command [flags]]\n' >&2
+        else
+            printf 'usage: tmux [-2CDlNuVv] [command [flags]]\n' >&2
+        fi
+        exit 1 ;;
+    *) exit 1 ;;
+esac
+SH
+chmod +x "$scratch/doctor-bin/tmux"
+PATH="$doctor_path" make doctor >"$scratch/doctor-output"
+grep -Fq 'ok: tmux supports -N' "$scratch/doctor-output"
+if TEST_TMUX_NO_N=1 PATH="$doctor_path" make doctor >"$scratch/doctor-output" 2>&1; then exit 1; fi
+grep -Fq 'fail: tmux lacks -N' "$scratch/doctor-output"
+echo 'PASS: tmux 3.4 usage detection and unsupported option rejection'
