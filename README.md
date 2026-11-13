@@ -31,6 +31,13 @@ outside the server service is refused and left untouched. Session processes
 belong to the server's persistent cgroup and survive logout while the user
 manager remains running.
 
+### Installation safety
+
+The installer requires root-owned, non-group/world-writable directories under
+`/opt/tmux-manager` and rejects symlinked installations. During a coordinated
+migration, preserve the existing checkout and sessions, remove the old link
+only after arranging downtime, and install into a trusted root-owned directory.
+
 ## Migration from the system template
 
 The old `tmux-manager@<user>.service` may own the existing server and its
@@ -79,6 +86,10 @@ CLI. A mismatch fails clearly. The same rule applies to `TMUX_TMPDIR` and the
 unit prefix used by isolated tests. Changes to manager environment affect
 future services; arrange their persistence separately if needed at boot.
 
+Service mutations require the invoking environment to match the user manager;
+starting or restarting services also requires lingering to be enabled.
+Environment values reported with systemd ANSI-C quoting are supported.
+
 ## Commands
 
 `list` shows configured sessions; `sessions` prints names for scripts.
@@ -124,6 +135,9 @@ integration test requiring an existing user bus; it uses unique runtime units,
 a private socket, and a test-only linger response. Never point
 tests at an existing server. See [AGENTS.md](AGENTS.md) for setup.
 
+Development bootstrap supports apt-get and pacman; `make -n bootstrap` previews
+the required package installation without upgrading the system.
+
 ## Uninstall
 
 After saving sessions, disable and stop the user service and server explicitly,
@@ -133,17 +147,3 @@ Configuration files remain in `~/.tmux-manager` until removed separately.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-# Installation safety
-
-The installer requires root-owned, non-group/world-writable directories under
-`/opt/tmux-manager` and rejects symlinked installations. During a coordinated
-migration, preserve the existing checkout and sessions, remove the old link
-only after arranging downtime, and install into a trusted root-owned directory.
-
-Service mutations require the invoking environment to match the user manager;
-starting or restarting services also requires lingering to be enabled.
-Environment values reported with systemd ANSI-C quoting are supported.
-
-Development bootstrap supports apt-get and pacman; `make -n bootstrap` previews
-the required package installation without upgrading the system.
-
