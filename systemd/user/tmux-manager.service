@@ -1,0 +1,13 @@
+[Unit]
+Description=Start enabled tmux-manager sessions
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/tmux-manager/bin/tmux-manager boot
+ExecStop=/opt/tmux-manager/bin/tmux-manager shutdown
+TimeoutStartSec=0
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

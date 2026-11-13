@@ -1,0 +1,13 @@
+[Unit]
+Description=Persistent default tmux server
+
+[Service]
+Type=exec
+ExecStart=/opt/tmux-manager/bin/tmux-manager _server
+ExecStartPost=/opt/tmux-manager/bin/tmux-manager _ready
+TimeoutStartSec=15
+TimeoutStopSec=30
+# No automatic restart: losing a server loses its sessions.
+
+[Install]
+WantedBy=default.target
