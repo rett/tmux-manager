@@ -9,6 +9,7 @@ real_user() {
 }
 
 cmd_setup() {
+    check_manager_environment || return 1
     real_user || return 1
     /usr/bin/sudo -n /usr/bin/loginctl enable-linger "$REPLY" || {
         warn 'cannot enable linger; install the exact sudoers rule or ask an administrator'

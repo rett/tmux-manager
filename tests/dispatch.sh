@@ -43,6 +43,25 @@ bin/tmux-manager restart other
 bin/tmux-manager stop other
 grep -Fq 'stop tmux-manager-session@other.service' "$CALLS"
 if TEST_LINGER=no bin/tmux-manager start other; then exit 1; fi
+for action in start stop restart enable disable; do
+    : >"$CALLS"
+    if TEST_CONF=/different bin/tmux-manager service "$action" server; then exit 1; fi
+    if grep -Eq 'systemctl --user (start|stop|restart|enable|disable) ' "$CALLS"; then exit 1; fi
+done
+for action in start restart; do
+    : >"$CALLS"
+    if TEST_LINGER=no bin/tmux-manager service "$action" server; then exit 1; fi
+    if grep -Eq 'systemctl --user (start|restart) ' "$CALLS"; then exit 1; fi
+done
+for failure in linger environment owner; do
+    : >"$CALLS"
+    case $failure in
+        linger) if TEST_LINGER=no bin/tmux-manager restart other; then exit 1; fi ;;
+        environment) if TEST_CONF=/different bin/tmux-manager restart other; then exit 1; fi ;;
+        owner) if TEST_PID=1 bin/tmux-manager restart other; then exit 1; fi ;;
+    esac
+    if grep -Fq 'restart tmux-manager-session@other.service' "$CALLS"; then exit 1; fi
+done
 if TEST_CONF=/different bin/tmux-manager start other; then exit 1; fi
 encoded_conf=${TMUX_MANAGER_CONF_DIR//\'/\'\\\'\'}
 TEST_CONF="'$encoded_conf'" bin/tmux-manager start other

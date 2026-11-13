@@ -133,3 +133,17 @@ Configuration files remain in `~/.tmux-manager` until removed separately.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+# Installation safety
+
+The installer requires root-owned, non-group/world-writable directories under
+`/opt/tmux-manager` and rejects symlinked installations. During a coordinated
+migration, preserve the existing checkout and sessions, remove the old link
+only after arranging downtime, and install into a trusted root-owned directory.
+
+Service mutations require the invoking environment to match the user manager;
+starting or restarting services also requires lingering to be enabled.
+Environment values reported with systemd ANSI-C quoting are supported.
+
+Development bootstrap supports apt-get and pacman; `make -n bootstrap` previews
+the required package installation without upgrading the system.
+

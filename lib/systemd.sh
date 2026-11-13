@@ -15,11 +15,40 @@ service_action() {
 
 # Decode the shell-style quoting emitted by systemctl without evaluating it.
 decode_environment_value() {
-    local input=$1 out='' char quote='' i
+    local input=$1 out='' char quote='' i esc digits decoded
     for ((i=0; i<${#input}; i++)); do
         char=${input:i:1}
-        if [[ $quote == "'" ]]; then
+        if [[ $quote == ansi ]]; then
+            if [[ $char == "'" ]]; then
+                quote=
+            elif [[ $char == \\ ]]; then
+                ((i++)); ((i < ${#input})) || return 1
+                esc=${input:i:1}
+                case $esc in
+                    a|b|e|E|f|n|r|t|v|\\) printf -v decoded '%b' "\\$esc" ;;
+                    "'"|'"') decoded=$esc ;;
+                    x)
+                        digits=${input:i+1:2}
+                        [[ $digits =~ ^[[:xdigit:]]{2}$ && $digits != 00 ]] || return 1
+                        printf -v decoded '%b' "\\x$digits"
+                        ((i+=2)) ;;
+                    [0-7])
+                        digits=${input:i:3}
+                        [[ $digits =~ ^[0-7]{3}$ ]] || return 1
+                        (( 8#$digits > 0 && 8#$digits <= 255 )) || return 1
+                        printf -v decoded '%b' "\\0$digits"
+                        ((i+=2)) ;;
+                    *) return 1 ;;
+                esac
+                out+=$decoded
+            else
+                out+=$char
+            fi
+        elif [[ $quote == "'" ]]; then
             if [[ $char == "'" ]]; then quote=; else out+=$char; fi
+        elif [[ $char == '$' && -z $quote && ${input:i+1:1} == "'" ]]; then
+            quote=ansi
+            ((i++))
         elif [[ $char == "'" && -z $quote ]]; then
             quote="'"
         elif [[ $char == '"' ]]; then
@@ -52,11 +81,15 @@ check_manager_environment() {
     done
 }
 
-require_backend() {
+require_persistence() {
     local linger
     check_manager_environment || return 1
     linger=$(loginctl show-user "$(id -u)" -p Linger --value) || { warn "cannot check lingering"; return 1; }
     [[ $linger == yes ]] || { warn "enable persistence first: sudo loginctl enable-linger $(id -un)"; return 1; }
+}
+
+require_backend() {
+    require_persistence || return 1
     systemctl --user start "${TMUX_MANAGER_UNIT_PREFIX:-tmux-manager}-server.service" || return 1
     service_ready
 }

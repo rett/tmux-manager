@@ -14,15 +14,27 @@ if [[ ! -f $SRC/bin/tmux-manager || ! -f $SRC/systemd/user/tmux-manager.service 
     exit 1
 fi
 
-# /opt/tmux-manager may be a symlink to the source tree; don't copy onto itself.
-if [[ "$(readlink -f /opt/tmux-manager)" == "$(readlink -f "$SRC")" ]]; then
-    echo "install.sh: /opt/tmux-manager already points at $SRC, skipping copy"
-    chmod 0755 "$SRC/bin/tmux-manager"
-else
-    install -d -m 0755 /opt/tmux-manager/bin /opt/tmux-manager/lib
-    install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
-    install -m 0644 "$SRC"/lib/*.sh /opt/tmux-manager/lib/
-fi
+# Every existing component must be owned by root and protected from replacement.
+trusted() {
+    local path=$1 kind=$2 owner mode
+    [[ ! -L $path ]] || { echo "install.sh: unsafe symlink: $path" >&2; return 1; }
+    [[ -e $path ]] || return 0
+    if [[ $kind == dir ]]; then [[ -d $path ]] || return 1
+    else [[ -f $path ]] || return 1; fi
+    read -r owner mode < <(stat -c '%u %a' -- "$path")
+    if [[ $owner != 0 || ! $mode =~ ^[0-7]+$ ]] || (( (8#$mode & 0022) != 0 )); then
+        echo "install.sh: untrusted destination: $path" >&2; return 1;
+    fi
+}
+for dir in /opt /opt/tmux-manager /opt/tmux-manager/bin /opt/tmux-manager/lib /opt/tmux-manager/sbin; do
+    trusted "$dir" dir || exit 1
+done
+for file in /opt/tmux-manager/bin/tmux-manager /opt/tmux-manager/sbin/tmux-manager-sudoers /opt/tmux-manager/lib/*.sh; do
+    trusted "$file" file || exit 1
+done
+install -d -m 0755 /opt/tmux-manager/bin /opt/tmux-manager/lib
+install -m 0755 "$SRC/bin/tmux-manager" /opt/tmux-manager/bin/tmux-manager
+install -m 0644 "$SRC"/lib/*.sh /opt/tmux-manager/lib/
 install -d -m 0755 /opt/tmux-manager/sbin
 install -m 0755 "$SRC/scripts/tmux-manager-sudoers" /opt/tmux-manager/sbin/tmux-manager-sudoers
 install -m 0644 "$SRC/systemd/tmux-manager@.service" /etc/systemd/system/tmux-manager@.service
