@@ -56,7 +56,8 @@ doctor_path="$scratch/doctor-bin:$PATH"
 mkdir "$scratch/empty"
 sed -n '/^require_tmux() {/,/^}/p' bin/tmux-manager >"$scratch/require-tmux.sh"
 # The isolated PATH and functions model a wrapper without an executable.
-# shellcheck disable=SC2123,SC2329,SC1091
+# The sourced probe calls die indirectly, which older ShellCheck cannot trace.
+# shellcheck disable=SC2123,SC2329,SC1091,SC2317
 if ( PATH="$scratch/empty"; tmux() { :; }; die() { exit 1; }; \
      source "$scratch/require-tmux.sh"; require_tmux ); then exit 1; fi
 echo 'PASS: missing tmux executable is detected'

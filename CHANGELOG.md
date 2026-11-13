@@ -12,6 +12,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add bootstrap, environment diagnostics and static checks to CI.
 
 ### Changed
+- Support older ShellCheck analysis of sourced regression-test fixtures.
 - Recognize tmux capabilities when older versions print a diagnostic before usage.
 - A persistent user service owns the default tmux server; per-session user
   units allow independent start, stop and restart. Startup requires lingering
